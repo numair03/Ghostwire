@@ -5,28 +5,30 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/devlup-labs/Ghostwire/coordination-server/database" // Import database package
 	"github.com/devlup-labs/Ghostwire/coordination-server/routes/general"
 	"github.com/gorilla/mux"
 )
 
-func CreateServer() (srv *http.Server) {
+// 1. Accept store interface as a parameter
+func CreateServer(store database.Store) (srv *http.Server) {
 	srv = &http.Server{
-		Handler:      createRouter(),
-		Addr:         "127.0.0.1:8000", // TODO: Change this to be based on env vars
+		Handler:      createRouter(store), // Pass store to router
+		Addr:         "127.0.0.1:8000",
 		WriteTimeout: 15 * time.Second,
 		ReadTimeout:  15 * time.Second,
 	}
 	return
 }
 
-func createRouter() (router *mux.Router) {
+func createRouter(store database.Store) (router *mux.Router) {
 	router = mux.NewRouter()
 
+	// 2. Pass store to handlers (we will update register/checkin to accept this)
 	v1subrouter := router.PathPrefix("/api/v1").Subrouter()
-	v1subrouter.HandleFunc("/login", general.LoginHandler)
 	v1subrouter.HandleFunc("/connect", general.ConnectHandler)
-	v1subrouter.HandleFunc("/checkin", general.CheckinHandler)
-	v1subrouter.HandleFunc("/register", general.RegisterHandler)
+	v1subrouter.HandleFunc("/checkin", general.MakeCheckinHandler(store))
+	v1subrouter.HandleFunc("/register", general.MakeRegisterHandler(store))
 
 	router.HandleFunc("/api", versionCheckHandler)
 	router.HandleFunc("/", rootHandler)

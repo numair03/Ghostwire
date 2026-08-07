@@ -4,17 +4,60 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+
+	"github.com/devlup-labs/Ghostwire/coordination-server/database"
 )
 
 type RegisterRequest struct {
 	DeviceID   string `json:"deviceId"`
 	OAuthToken string `json:"oAuthToken"`
 	IsHealthy  bool   `json:"isHealthy"`
+	PublicKey  string `json:"publicKey"` //added for WG
+	Endpoint   string `json:"endpoint"`  //added for WG
 }
 
 type RegisterResponse struct {
 	VirtualIP string   `json:"virtualIp"`
 	AllowList []string `json:"allowList"`
+}
+
+// 1. Return http.HandlerFunc with store injected
+func MakeRegisterHandler(store database.Store) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		defer r.Body.Close()
+
+		var req RegisterRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			http.Error(w, "Invalid JSON body", http.StatusBadRequest)
+			return
+		}
+
+		// 2. Save new node directly into our store interface!
+		dev := database.Device{
+			DeviceID:  req.DeviceID,
+			PublicKey: req.PublicKey,
+			Endpoint:  req.Endpoint,
+			VirtualIP: AllocateVirtualIP(),
+		}
+
+		if err := store.RegisterDevice(r.Context(), dev); err != nil {
+			http.Error(w, "Failed to register device", http.StatusInternalServerError)
+			return
+		}
+
+		resp := RegisterResponse{
+			VirtualIP: dev.VirtualIP,
+			AllowList: BuildAllowList(req.OAuthToken),
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusCreated)
+		json.NewEncoder(w).Encode(resp)
+	}
 }
 
 func RegisterHandler(w http.ResponseWriter, r *http.Request) {
@@ -25,7 +68,6 @@ func RegisterHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	defer r.Body.Close()
-
 
 	var req RegisterRequest
 
@@ -76,8 +118,6 @@ func RegisterHandler(w http.ResponseWriter, r *http.Request) {
 
 	json.NewEncoder(w).Encode(resp)
 }
-
-
 
 func VerifyOAuthToken(token string) (string, error) {
 

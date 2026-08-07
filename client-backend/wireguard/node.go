@@ -7,14 +7,15 @@ import (
 	"golang.zx2c4.com/wireguard/conn"
 	"golang.zx2c4.com/wireguard/device"
 	"golang.zx2c4.com/wireguard/tun"
-	"golang.zx2c4.com/wireguard/wgctrl/wgtypes" // <-- The corrected import path
+	"golang.zx2c4.com/wireguard/wgctrl/wgtypes"
 )
 
 // PeerConfig holds data received from the coordination server checkin
 type PeerConfig struct {
-	PublicKey string
-	Endpoint  string
-	AllowedIP string
+	PublicKey           string
+	Endpoint            string
+	AllowedIP           string
+	PersistentKeepalive int // seconds; 0 disables keepalive
 }
 
 type Node struct {
@@ -36,7 +37,7 @@ func NewNode() (*Node, error) {
 }
 
 // Start creates the virtual TUN interface in the OS
-func (n *Node) Start(ifaceName string, listenPort int) (string, error) { // <-- changed return type
+func (n *Node) Start(ifaceName string, listenPort int) (string, error) {
 	tunDev, err := tun.CreateTUN(ifaceName, 1420)
 	if err != nil {
 		return "", err
@@ -66,18 +67,29 @@ func (n *Node) SyncPeers(peers []PeerConfig) error {
 	var ipcBuf string
 
 	for _, p := range peers {
+		// p.PublicKey is a standard WireGuard base64 key string (e.g. "xTIB...Dg=")
+		// as received over JSON. It must NOT be treated as raw bytes anywhere
+		// upstream of this point — ParseKey expects the base64 text form.
 		key, err := wgtypes.ParseKey(p.PublicKey)
 		if err != nil {
+			fmt.Printf("[GhostWire] WARNING: could not parse peer public key '%s': %v — peer skipped\n", p.PublicKey, err)
 			continue
 		}
 
-		// FIX: Use hex.EncodeToString for the peer's public key
 		ipcBuf += fmt.Sprintf(
 			"public_key=%s\nendpoint=%s\nallowed_ip=%s\n",
 			hex.EncodeToString(key[:]),
 			p.Endpoint,
 			p.AllowedIP,
 		)
+
+		if p.PersistentKeepalive > 0 {
+			ipcBuf += fmt.Sprintf("persistent_keepalive_interval=%d\n", p.PersistentKeepalive)
+		}
+	}
+
+	if ipcBuf == "" {
+		fmt.Println("[GhostWire] WARNING: SyncPeers called with zero valid peers — no-op")
 	}
 
 	return n.Device.IpcSet(ipcBuf)
